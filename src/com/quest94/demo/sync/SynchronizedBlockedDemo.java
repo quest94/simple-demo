@@ -1,6 +1,8 @@
 package com.quest94.demo.sync;
 
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -17,79 +19,132 @@ public class SynchronizedBlockedDemo {
     public static void main(String[] args) throws InterruptedException {
         // 1.定义一个Runnable
         // 2.在Runnable定义同步代码块
-        Runnable run = new SynchronizedBlocked();
-//        Runnable run = new ReentrantLockInterruptibly();
+        RunnableHold runnableHold = new SynchronizedBlocked();
+//        RunnableHold runnableHold = new ReentrantLockInterruptibly();
         // 3.首先开启一个线程来执行同步代码块
-        Thread t1 = new Thread(run);
-        t1.start();
-        TimeUnit.MILLISECONDS.sleep(1000);
-        // 4.然后开启一个线程来执行同步代码块(阻塞状态)
-        Thread t2 = new Thread(run);
-        t2.start();
-        for (int i = 0; i < 10; i++) {
+        // 4.然后再开启多个线程来执行同步代码块(阻塞状态)
+        Thread[] threads = new Thread[5];
+        for (int i = 0; i < threads.length; i++) {
+            threads[i] = new Thread(runnableHold.getRunnable(), "t" + (i + 1));
+            threads[i].start();
+            // 睡500毫秒，依次进入等待锁队列
+            TimeUnit.MILLISECONDS.sleep(500);
+        }
+        for (int i = 0; i < 15; i++) {
             if (i == 5) {
+                Thread thread = threads[1];
+                System.out.println(thread.getName() + ": before interrupt thread");
                 // 5.中断第二个线程
-                System.out.println("before stop thread");
-                t2.interrupt();
-                System.out.println("after stop thread");
+                // synchronized-等待锁的线程处于BLOCKED状态，中断无效
+                thread.interrupt();
+                System.out.println(thread.getName() + ": after interrupt thread");
             }
-            System.out.println(i + "： " + t1.getName() + " state: " + t1.getState());
-            System.out.println(i + "： " + t2.getName() + " state: " + t2.getState());
+            if (i == 10) {
+                // 6.放开第一个线程
+                Thread thread = threads[0];
+                System.out.println(thread.getName() + ": before unpark thread");
+                runnableHold.unpark(thread);
+                System.out.println(thread.getName() + ": after unpark thread");
+            }
+            for (Thread thread : threads) {
+                System.out.println(i + "： " + thread.getName() + " state: " + thread.getState());
+            }
             TimeUnit.MILLISECONDS.sleep(1000);
+            System.out.println("--------------------------");
         }
 
         System.out.println("method end");
-        t1.interrupt();
+
+        Arrays.stream(threads).forEach(runnableHold::unpark);
     }
 
-    static class SynchronizedBlocked implements Runnable {
+    interface RunnableHold {
+
+        Runnable getRunnable();
+
+        void park(String name);
+
+        void unpark(Thread thread);
+    }
+
+
+    static class SynchronizedBlocked implements RunnableHold {
 
         private static final Object LOCK = new Object();
-
-        public void run() {
-            // 2.在Runnable定义同步代码块
+        private final Runnable runnable = () -> {
             synchronized (LOCK) {
+                // 2.在Runnable定义同步代码块
                 String name = Thread.currentThread().getName();
                 System.out.println(name + " enter synchronized code");
                 // 保证不退出同步代码块
-                try {
-                    TimeUnit.MINUTES.sleep(1000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                park(name);
                 System.out.println(name + " exit synchronized code");
             }
+        };
+
+
+        @Override
+        public Runnable getRunnable() {
+            return runnable;
+        }
+
+        @Override
+        public void park(String name) {
+            LockSupport.park();
+        }
+
+        @Override
+        public void unpark(Thread thread) {
+            LockSupport.unpark(thread);
         }
 
     }
 
-    static class ReentrantLockInterruptibly implements Runnable {
+    static class ReentrantLockInterruptibly implements RunnableHold {
 
         private static final ReentrantLock LOCK = new ReentrantLock();
 
-        public void run() {
+        private final Runnable runnable = () -> {
             // 2.在Runnable定义同步代码块
+            String name = Thread.currentThread().getName();
             try {
                 LOCK.lockInterruptibly();
             } catch (InterruptedException e) {
                 e.printStackTrace();
-                System.out.println(Thread.currentThread().getName() + " end on InterruptedException");
+                System.out.println(name + " end on InterruptedException");
                 return;
             }
             try {
-                System.out.println(Thread.currentThread().getName() + " enter synchronized code");
-                try {
-                    // 保证不退出同步代码块
-                    TimeUnit.MINUTES.sleep(1000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                System.out.println(Thread.currentThread().getName() + " exit synchronized code");
+                System.out.println(name + " enter synchronized code");
+                // 保证不退出同步代码块
+                park(name);
+                System.out.println(name + " exit synchronized code");
             } finally {
                 LOCK.unlock();
             }
+        };
+
+        @Override
+        public Runnable getRunnable() {
+            return runnable;
         }
 
+        @Override
+        public void park(String name) {
+            try {
+                TimeUnit.MINUTES.sleep(60);
+            } catch (InterruptedException e) {
+                System.out.println(name + " unpark on " + e);
+            }
+        }
+
+        @Override
+        public void unpark(Thread thread) {
+            if (thread.isInterrupted()) {
+                return;
+            }
+            thread.interrupt();
+        }
     }
 }
 
