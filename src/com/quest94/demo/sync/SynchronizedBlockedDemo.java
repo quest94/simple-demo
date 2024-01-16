@@ -131,6 +131,15 @@ public class SynchronizedBlockedDemo {
 
         @Override
         public void park(String name) {
+            // 换成线程睡眠的阻塞方式
+
+            /*
+             * park 是等待一个许可，unpark 是为某线程提供一个许可。
+             * 如果某线程 A 调用 park，那么除非另外一个线程调用 unpark(A) 给 A 一个许可，否则线程 A 将阻塞在 park 操作上。
+             * 每次调用一次 park，需要有一个 unpark 来解锁。
+             * unpark 可以先于 park 调用，但是不管 unpark 先调用几次，都只提供一个许可，不可叠加。
+             * 只需要一次 park 来消费掉 unpark 带来的许可，再次调用会阻塞。
+             */
             try {
                 TimeUnit.MINUTES.sleep(60);
             } catch (InterruptedException e) {
